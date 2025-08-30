@@ -1,0 +1,20 @@
+{
+  "name": "vkrpc",
+  "version": "1.0.0",
+  "description": "Discord Rich Presence of VK Music",
+  "main": "app.ts",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "dispare",
+  "license": "ISC",
+  "dependencies": {
+    "@types/express": "^5.0.3",
+    "@xhayper/discord-rpc": "^1.3.0",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0"
+  }
+}
