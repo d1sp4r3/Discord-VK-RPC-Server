@@ -1,0 +1,5 @@
+{
+    "usingPort": 3000,
+    "hostUrl": "http://localhost",
+    "scope": "/vk-discord-rpc-music"
+}

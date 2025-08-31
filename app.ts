@@ -1,99 +1,116 @@
-import * as DiscordRPC from "@xhayper/discord-rpc";
-import express from "express";
-import { makeUrlShorter } from "./localUrlShortener.ts";
+import express, { type Express, type Request, type Response } from "express";
 
-const CLIENT_ID: string = "1411353042405691422";
-const CLIENT_OPTIONS: DiscordRPC.ClientOptions = {
-  clientId: CLIENT_ID,
-};
+import {
+  ClientInitializer,
+  READY_EVENT_NAME,
+} from "./lib/clients/clientInitializer.ts";
+import {
+  MusicActivityManager,
+  type MusicActivitySet,
+} from "./lib/managers/musicActivityManager.ts";
+import {
+  ServicesUrlShortener,
+  type URLShortenerMultiServiceRequest,
+  DEFAULT_CHARACTERS_LIMIT,
+} from "./lib/utils/ServicesUrlShortener.ts";
+import ApplicationConfig from "./lib/config/application.json" with { type: "json" };
+import type { MusicData } from "./lib/types/MusicData.ts";
 
-export interface MusicData {
-  title: string;
-  artist: string;
-  thumbnailUrl: string;
-  listenStartTimestamp: number;
-  listenEndTimestamp: number;
-}
+const MINIMUM_PLAY_LENGTH = 1000;
 
-const app = express();
-const PORT: number = 3000;
+const app: Express = express();
+app.use(express.json());
 
-var playingMusicKey: string = "";
-var lastPlayingEndTimestamp: number = 0;
-
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+app.use((req: Request, res: Response, next) => {
+  const origin = (req.headers.origin as string) ?? "*";
+  res.header("Access-Control-Allow-Origin", origin);
   res.header(
     "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept"
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
   );
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
   next();
 });
 
-app.use(express.json());
+async function tryShortenUrl(url: string): Promise<string> {
+  try {
+    const shortenerMultiRequest: URLShortenerMultiServiceRequest = { url };
+    const shortened = await ServicesUrlShortener.tryShorterWithServicesAndLimit(
+      shortenerMultiRequest,
+      DEFAULT_CHARACTERS_LIMIT
+    );
+    return shortened ?? url;
+  } catch (err) {
+    console.error("URL shortener failed", err);
+    return url;
+  }
+}
+app.use((req, _res, next) => {
+  console.log(`[INCOMING] ${req.method} ${req.url}`);
+  next();
+});
+async function onPost(request: Request, response: Response) {
+  try {
+    const body: MusicData = request.body ?? {};
+    const thumbnail = body.thumbnailUrl;
+    const finalThumbnailUrl = thumbnail ? await tryShortenUrl(thumbnail) : thumbnail;
+    console.log("Final thumbnail url:", finalThumbnailUrl);
 
-function getMusicKey(musicData: MusicData): string {
-  return `${musicData.title}_${musicData.artist}`;
+    const listenProgress =
+      typeof body.listenProgressTime === "number" ? body.listenProgressTime : 0;
+    const startListeningTimestamp = Date.now() - listenProgress;
+
+    const musicActivitySet: MusicActivitySet = {
+      name: body.name,
+      author: body.author,
+      thumbnailUrl: finalThumbnailUrl,
+      smallImageUrl: "dispare_logo",
+      startListeningTimestamp,
+      soundLength: body.duration * 1000,
+      like: body.like,
+      isPlaying: body.isPlaying,
+    };
+
+    console.log(musicActivitySet);
+    const setResult = await MusicActivityManager.SetMusicActivity(
+      client,
+      musicActivitySet
+    );
+    console.log("Set music activity setted:", setResult);
+    return response.status(200).send("OK");
+  } catch (err) {
+    console.error("Failed to set music activity", err);
+    return response.status(500).send("Failed to set music activity");
+  }
 }
 
-async function updateMusic(musicData: MusicData) {
-  const thisMusicKey = getMusicKey(musicData);
-  if (
-    playingMusicKey === thisMusicKey &&
-    lastPlayingEndTimestamp >= musicData.listenEndTimestamp
-  ) {
-    return;
-  }
-  playingMusicKey = thisMusicKey;
-  lastPlayingEndTimestamp = musicData.listenEndTimestamp;
-
-  var shortenedUrl = await makeUrlShorter(musicData.thumbnailUrl).catch(
-    (errorObject) => {
-      console.error("Error while shortening URL:", errorObject);
-    }
+function startServer(): void {
+  app.options(ApplicationConfig.scope, (_req, res) => res.sendStatus(204));
+  app.post(
+    ApplicationConfig.scope,
+    (request: Request, response: Response) => onPost(request, response)
   );
-  if (!shortenedUrl || shortenedUrl === "" || shortenedUrl.length >= 256) {
-    console.error("Shortened URL is too long or null:", shortenedUrl);
-    shortenedUrl = "album_no_logo";
-  }
-
-  const remainingTime = Math.max(musicData.listenEndTimestamp - Date.now(), 0);
-  console.log("Timeout added:", remainingTime / 1000);
-  setTimeout((remainingTime) => {
-    client.user?.clearActivity();
-    if (playingMusicKey == thisMusicKey) {
-      lastPlayingEndTimestamp = 0;
-      playingMusicKey = "";
-      console.log("Cleared music activity");
-    }
-  }, remainingTime);
-
-  const activity: DiscordRPC.SetActivity = {
-    details: musicData.title,
-    state: musicData.artist,
-    type: 2,
-    largeImageKey: shortenedUrl,
-    smallImageKey: "dispare_logo",
-    startTimestamp: musicData.listenStartTimestamp,
-    endTimestamp: lastPlayingEndTimestamp,
-  };
-  client.user?.setActivity(activity);
-  console.log("Received new music activity:", activity);
+  app.listen(ApplicationConfig.usingPort, () => {
+    console.log(
+      `Server running on ${ApplicationConfig.hostUrl}:${ApplicationConfig.usingPort}`
+    );
+  });
 }
 
-const client = new DiscordRPC.Client(CLIENT_OPTIONS);
-client.on("ready", () => {
-  console.log("Discord RPC ready, starting up music activity server");
-  app.post("/vk-discord-rpc-music", (req, res) => {
-    updateMusic(req.body);
-    res.status(200).send("OK");
-  });
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-});
+const client = ClientInitializer.getClient();
+client.on(READY_EVENT_NAME, startServer);
 
-client.login().catch((errorObject) => {
-  console.error("Could not login: " + errorObject);
-});
+async function loginClient(): Promise<void> {
+  const startLoginTimestamp: number = Date.now();
+  try {
+    console.log("Attempt to login client");
+    await client.login();
+    console.log(`Logged in in ${Date.now() - startLoginTimestamp}ms`);
+  } catch (errorObject) {
+    console.log("Client failed to login:", errorObject);
+  }
+}
+loginClient();
