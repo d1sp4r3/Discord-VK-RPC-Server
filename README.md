@@ -6,7 +6,8 @@ If you'd like, you can fix them via a fork.
 However, I'm no longer maintaining this project, so you'll have to fix any bugs and issues yourselves =)
 
 You need to change the API key and run this by using
-npx tsx app.ts
+
+<b><a>npx tsx app.ts</a></b>
 
 Client:
 https://github.com/d1sp4r3/Discord-VK-RPC-Client-Browser-Extension
